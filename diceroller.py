@@ -6,7 +6,12 @@ from kivy.uix.textinput import TextInput
 from kivy.uix.button import Button
 from kivy.uix.togglebutton import ToggleButton
 from kivy.uix.scrollview import ScrollView
+#from kivy.uix.behaviors import FocusBehavior
+from kivy.core.window import Window
 from random import randint
+from datetime import datetime
+from hashlib import blake2b
+import re
 
 def rollx(number_of_dice, on_x_up, type_of_dice):
 	number_of_successes = 0
@@ -25,13 +30,23 @@ def rollx(number_of_dice, on_x_up, type_of_dice):
 	return roll_array
 
 class WrappedLabel(Label):
-    # Based on Tshirtman's answer
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.bind(
-            width=lambda *x:
-            self.setter('text_size')(self, (self.width, None)),
-            texture_size=lambda *x: self.setter('height')(self, self.texture_size[1]))
+	# Based on Tshirtman's answer
+	def __init__(self, **kwargs):
+		super().__init__(**kwargs)
+		self.bind(
+			width=lambda *x:
+			self.setter('text_size')(self, (self.width, None)),
+			texture_size=lambda *x: self.setter('height')(self, self.texture_size[1]))
+
+#class FocusInput(FocusBehavior,TextInput):
+#	pass
+
+class IntInput(TextInput):
+	pat = re.compile('[^0-9]')
+	def insert_text(self, substring, from_undo=False):
+		pat = self.pat
+		s = re.sub(pat, '', substring)
+		return super(IntInput, self).insert_text(s, from_undo=from_undo)
 
 class mainDiceRoller(GridLayout):
 	def __init__(self, **kwargs):
@@ -73,44 +88,56 @@ class mainDiceRoller(GridLayout):
 
 		self.dN_button = ToggleButton(text="dN", group="dice")
 		self.dN_input = TextInput(multiline=False, font_size=26)
+
+		self.CLEAR_LOG = Button(text="Clear\nLogfile")
+		self.CLEAR_LOG.bind(on_press=self.CLEAR_ROLL_LOG)
 		#dN_button setting dice_state is controlled under the do_roll method
 		##
 
 		self.xdx_grid = GridLayout(padding=[0,0,5,5], cols=1)
 		##
-		self.xdx_label = Label(text="Number of Dice to Roll:")
-		self.xdx = TextInput(multiline=False, font_size=26)
+		self.xdx_label = Label(text="Number of\nDice to Roll:")
+		self.xdx = IntInput(multiline=False, font_size=26)
 		##
 		self.xup_grid = GridLayout(padding=[0,0,5,5], cols=1)
 
-		self.xup_label = Label(text="Succeeding on X+:")
-		self.xup = TextInput(multiline=False, font_size=26)
+		self.xup_label = Label(text="Pass on X+:")
+		self.xup = IntInput(multiline=False, font_size=26)
 		##
 
+		self.displayer_grid = GridLayout(padding=[5,5,5,5],cols=3)
 
 		##
 		self.displayer = WrappedLabel(
-			text="Roll array for "+"0"+" rolls:",
+			text="Rolls:",
 			halign="center",
 			valign="center",
-			font_size=20,
+			font_size=30,
 			padding=(0,0)
 			)
 		##
+		self.passed_rolls = WrappedLabel(
+			text = "",
+			halign="center",
+			valign="center",
+			font_size=40,
+			)
 		self.roll_array_viewer = ScrollView()
 		##
 		self.roll_array_viewer_label = WrappedLabel(
-			text="[ ]",
+			text="",
 			halign="center",
 			valign="center",
-			font_size=18,
+			font_size=30,
 			size_hint_y=None,
 			padding=(20,5)
 			)
 		##
-		self.roll = Button(text="Roll", font_size=20)
+		self.roll = Button(text="Roll", font_size=30)
 		self.roll.bind(on_press=self.do_roll)
 
+		##KEY ACTION GETTER:
+		Window.bind(on_key_down=self.key_action)
 
 		#####################
 		# DESIGN STRUCTURE: #
@@ -124,6 +151,7 @@ class mainDiceRoller(GridLayout):
 		self.button_array.add_widget(self.d20_button)
 		self.button_array.add_widget(self.dN_button)
 		self.button_array.add_widget(self.dN_input)
+		self.button_array.add_widget(self.CLEAR_LOG)
 		
 		self.inside.add_widget(self.button_array)
 		#
@@ -135,16 +163,41 @@ class mainDiceRoller(GridLayout):
 		self.inside.add_widget(self.xup_grid)
 		#
 		self.add_widget(self.inside)
-		self.add_widget(self.displayer)
+
+		self.displayer_grid.add_widget(self.displayer)
+		# self.displayer_grid.add_widget(self.passed_rolls)
 		self.roll_array_viewer.add_widget(self.roll_array_viewer_label)
-		self.add_widget(self.roll_array_viewer)
+		self.displayer_grid.add_widget(self.roll_array_viewer)
+		###self.add_widget(self.displayer)
+		self.add_widget(self.displayer_grid)
+		###self.add_widget(self.roll_array_viewer)
 		self.add_widget(self.roll)
+
 
 	####################
 	# DECLARE METHODS: #
 	####################
+	def key_action(self, *args):
+		
+		# eval of a keybind dict by hash lookup may be 
+		# a more efficient option than if/else in the long term:
+		#eval(self.key_bind_dict.get(args[3]))
+		if args[1]==32 or args[1]==13:
+			self.do_roll(self)
+		elif args[1]==9:
+			if self.xdx.focus==True:
+				self.xdx.focus = False
+				self.xup.focus = True
+			else:
+				self.xup.focus = False
+				self.xdx.focus = True
+		elif args[1]==127:
+			self.xdx.text = ''
+			self.xup.text = ''
+		print(args)
+
 	def change_dice_state(self,N=6):
-			self.dice_state = N
+		self.dice_state = N
 
 	def do_roll(self, event):
 		#Handling events related to dN needing to be refreshed between rolls:
@@ -171,8 +224,18 @@ class mainDiceRoller(GridLayout):
 		else:
 			self.displayer.text = "number of "+XUP+"+:\n "+str(roll_[0][0])+"\nRoll array for "+XDX+" d"+str(self.dice_state)+" rolls:"
 		self.roll_array_viewer_label.text=str(roll_[1:])
+		with open('ROLL_LOG.txt', 'a') as ROLL_LOG:
+			S = str(roll_ ) + '\n' + str(datetime.now())
+			hashtext = blake2b(S.encode()).hexdigest()
+			hash_signed_string = S+'\n'+hashtext+'\n'
+			ROLL_LOG.write(hash_signed_string)
 		# Clear Roll Array:
 		roll_=None
+
+	def CLEAR_ROLL_LOG(self, event):
+		with open('ROLL_LOG.txt', 'w') as ROLL_LOG:
+			ROLL_LOG.write('')
+
 
 class DiceRoller(App):
 	def build(self):
